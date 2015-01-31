@@ -119,7 +119,7 @@ def init_env():
 			counter_list.append(-1)
 		else:
 			counter_list.append(0)
-	print(u"counter_list is %s" % counter_list) 
+#	print(u"counter_list is %s" % counter_list) 
 
 def signal_handler(signum, frame):
 	global keep_working
