@@ -40,7 +40,7 @@ current_point = 0
 header = r'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'
 
 def init_args():
-	global only_one_domain, target_domain, save_file, prefix, suffix, max_length, log_exist_domain_name, each_time_sleep, time_sleep, time_step 
+	global only_one_domain, target_domain, save_file, prefix, suffix, max_length, log_exist_domain_name, each_time_sleep, time_sleep, time_step, current_point 
 	parse = argparse.ArgumentParser()
 	parse.add_argument('-n', '--name', dest='name', type=str,
 		nargs='?', const=None, default=None,
@@ -71,6 +71,9 @@ def init_args():
 	parse.add_argument('-e', '--eachsleep', dest='eachsleep', type=int,
 		nargs='?', const=1, default=1,
 		help=u"Checking every domain name's sleep time.Default is 1s.")
+	parse.add_argument('--startpoint', dest='startpoint', type=int,
+		nargs='?', const=0, default=0,
+		help=u"The start domain name's length.")
 	args = parse.parse_args()
 	only_one_domain = args.name
 	target_domain = args.domain
@@ -82,12 +85,15 @@ def init_args():
 	each_time_sleep = args.eachsleep
 	time_sleep = args.timesleep
 	time_step = args.timestep
+	current_point = args.startpoint
 	if not target_domain.startswith(u'.'):
 		target_domain = u'.' + target_domain
 	if save_file is None:
 		save_file = target_domain.split(u'.')[-1]
 	if (only_one_domain is not None) and (only_one_domain.find(u'.') == -1):
 		only_one_domain = only_one_domain + target_domain
+	if current_point >= max_length:
+		current_point = 0
 	print(u"\n======================================================================")
 	print(u"Progress Setting:")
 	print(u"Target domain is %s" % target_domain)
@@ -95,6 +101,7 @@ def init_args():
 	print(u"Prefix string is %s" % prefix)
 	print(u"Suffix string is %s" % suffix)
 	print(u"Max length is %s" % max_length)
+	print(u"Current point is %s" % current_point)
 	print(u"Log existed domain name? %s" % log_exist_domain_name)
 	print(u"Sleep time is %s s" % time_sleep)
 	print(u"Sleep time step is %s s" % time_step)
@@ -112,13 +119,14 @@ def init_env():
 		os.mkdir(data_path)
 	save_file = os.path.join(data_path, save_file)
 	fail_file = os.path.join(data_path, fail_file)
-	current_point = 0
 	counter_list = []
 	for i in range(max_length):
 		if i == 0:
 			counter_list.append(-1)
 		else:
 			counter_list.append(0)
+	if current_point > 0:
+		counter_list[0] = 0
 #	print(u"counter_list is %s" % counter_list) 
 
 def signal_handler(signum, frame):
@@ -230,6 +238,8 @@ init_args()
 init_env()
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTSTP, signal_handler)
+#signal.signal(signal.SIGKILL, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 if only_one_domain is None:
 	try:
 		start_progress()
