@@ -4,4 +4,4 @@ if [ ! -d "result" ]; then
 	mkdir result
 fi
 
-./domain.py -l > result/log &
+./domain.py -l >> result/log &

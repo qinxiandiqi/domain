@@ -19,6 +19,7 @@ only_one_domain = None
 target_domain = u'.com'
 save_file = u'com'
 fail_file = u'fail'
+exist_file = u"exist"
 prefix = u''
 suffix = u''
 max_length = 5
@@ -30,17 +31,21 @@ each_time_sleep = 1
 time_sleep = 30
 time_step = 5
 
+retry_fail = False
+retry_file = u'fial'
+
+start_domain = None
+
 alphabet = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
 	'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z')
-available_domain_name_list = []
-fail_domain_name_list = []
+alphabet_str = 'abcdefghijklmnopqrstuvwxyz'
 counter_list = []
 current_point = 0
 
 header = r'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'
 
 def init_args():
-	global only_one_domain, target_domain, save_file, prefix, suffix, max_length, log_exist_domain_name, each_time_sleep, time_sleep, time_step, current_point 
+	global only_one_domain, target_domain, save_file, prefix, suffix, max_length, log_exist_domain_name, each_time_sleep, time_sleep, time_step, current_point, retry_fail, retry_file, start_domain
 	parse = argparse.ArgumentParser()
 	parse.add_argument('-n', '--name', dest='name', type=str,
 		nargs='?', const=None, default=None,
@@ -74,6 +79,14 @@ def init_args():
 	parse.add_argument('--startpoint', dest='startpoint', type=int,
 		nargs='?', const=0, default=0,
 		help=u"The start domain name's length.")
+	parse.add_argument('--retryfail', dest='retryfail', action='store_true', default=False,
+		help=u"Retry the fail domain name of last checking.Default is false")
+	parse.add_argument('--retryfile', dest='retryfile', type=str,
+		nargs='?', const=u'fail', default=u'fail',
+		help=u"Use the retry fail file data.Default is the 'fail'.")
+	parse.add_argument('--startdomain', dest='startdomain', type=str,
+		nargs='?', const=None, default=None,
+		help=u"The start domain format.")
 	args = parse.parse_args()
 	only_one_domain = args.name
 	target_domain = args.domain
@@ -86,6 +99,9 @@ def init_args():
 	time_sleep = args.timesleep
 	time_step = args.timestep
 	current_point = args.startpoint
+	retry_fail = args.retryfail
+	retry_file = args.retryfile
+	start_domain = args.startdomain
 	if not target_domain.startswith(u'.'):
 		target_domain = u'.' + target_domain
 	if save_file is None:
@@ -110,7 +126,7 @@ def init_args():
 	print(u"======================================================================\n")
 
 def init_env():
-	global save_file, fail_file, max_length, current_point, counter_list 
+	global save_file, fail_file, max_length, current_point, counter_list, retry_file, exist_file, start_domain, alphabet_str
 	reload(sys)
 	sys.setdefaultencoding('utf-8')
 	current_path = os.getcwd()
@@ -119,13 +135,23 @@ def init_env():
 		os.mkdir(data_path)
 	save_file = os.path.join(data_path, save_file)
 	fail_file = os.path.join(data_path, fail_file)
+	retry_file = os.path.join(data_path, retry_file)
+	exist_file = os.path.join(data_path, exist_file)
 	counter_list = []
 	for i in range(max_length):
 		if i == 0:
 			counter_list.append(-1)
 		else:
 			counter_list.append(0)
-	if current_point > 0:
+	if (start_domain is not None) and (len(start_domain) <= max_length):
+		for index in range(len(start_domain)):
+			counter_list[index] = alphabet_str.find(start_domain[index])
+			if counter_list[index] == -1:
+				counter_list[index] = 0
+		current_point = len(start_domain) - 1
+		if current_point < 0:
+			current_point = 0
+	elif current_point > 0:
 		counter_list[0] = 0
 #	print(u"counter_list is %s" % counter_list) 
 
@@ -133,6 +159,22 @@ def signal_handler(signum, frame):
 	global keep_working
 	keep_working = False
 	print(u"\nStart finish the last progress and will auto exit...\n")
+
+def get_current_time_string():
+	return time.strftime(u"[%Y-%m-%d %H:%M:%S]", time.localtime())
+
+def get_domain_log(domain_name, msg):
+	return time.strftime(u"[%Y-%m-%d %H:%M:%S]", time.localtime()) + domain_name + u' - ' + msg
+
+def get_domain_from_log(msg):
+	return msg.split(']')[1].split(' - ')[0]
+
+def append_line_to_file(filename, data):
+	try:
+		with open(filename, 'a') as append_file:
+			append_file.write(data + u'\n')
+	except:
+		print(get_current_time_string() + u"Sorry!Save %s to %s fail." % (data, filename))
 
 def next_domain_name():
 	global max_length, current_point, counter_list, alphabet, prefix, suffix, target_domain
@@ -159,7 +201,7 @@ def next_domain_name():
 	return prefix + target_name + suffix + target_domain
 
 def check_domain_name(domain_name):
-	global keep_working, search_api, available_mark, too_fast_mark, exist_mark, try_again, time_sleep, time_step, domain_counter, domain_available_counter, log_exist_domain_name, fail_domain_name_list
+	global keep_working, search_api, available_mark, too_fast_mark, exist_mark, try_again, time_sleep, time_step, domain_counter, domain_available_counter, log_exist_domain_name, exist_file, save_file, fail_file
 	url = search_api % domain_name
 	domain_counter = domain_counter + 1
 	need_try_again = True
@@ -168,45 +210,46 @@ def check_domain_name(domain_name):
 			result = urllib2.urlopen(url, timeout=30).read().lower()
 			if result.find(exist_mark) >= 0:
 				if log_exist_domain_name:
-					print(u"%s is existed" % domain_name)
+					print(get_domain_log(domain_name, u"existed"))
+				append_line_to_file(exist_file, get_domain_log(domain_name, u"existed"))
 				need_try_again = False
 				try_again = False
 				return False
 			elif result.find(available_mark) >= 0:
 				domain_available_counter = domain_available_counter + 1
-				print(u"%s is avaiable." % domain_name)
+				print(get_domain_log(domain_name, u"available"))
+				append_line_to_file(save_file, get_domain_log(domain_name, u"available")) 
 				need_try_again = False
 				try_again = False
 				return True
 			elif result.find(too_fast_mark) >= 0:
 				if try_again:
 					time_sleep = time_sleep + time_step
-				print(u"checking to fast, sleep %s s" % time_sleep)
+				print(get_currrent_time_string() + u"checking to fast, sleep %s s" % time_sleep)
 				time.sleep(time_sleep)
 				need_try_again = True
 				try_again = True
 			else:
-				print(u"check %s happen unknow problem:" % domain_name)
+				print(get_current_time_string() + u"check %s happen unknow problem:" % domain_name)
 				print(result)
-				fail_domain_name_list.append(domain_name + ' - ' + result)
+				append_line_to_line(fail_file, get_domain_log(domain_name, result))
 				need_try_again = False
 				try_again = False
 				return False 
 	except:
-		print(u"Sorry, check %s fail." % domain_name)
-		fail_domain_name_list.append(domain_name)
+		print(get_current_time_string() + u"Sorry, check %s fail." % domain_name)
+		append_line_to_file(fail_file, get_domain_log(domain_name, u"other error."))
 		return False
 
 def start_progress():
-	global keep_working, available_domain_name_list, domain_counter, domain_available_counter, each_time_sleep
+	global keep_working, domain_counter, domain_available_counter, each_time_sleep
 	keep_working = True
 	while keep_working:
 		check_name = next_domain_name()
 		if check_name is None:
 			keep_working = False
 		else:
-			if check_domain_name(check_name):
-				available_domain_name_list.append(check_name)
+			check_domain_name(check_name)
 			time.sleep(each_time_sleep)
 	else:
 		print(u"======================================")
@@ -215,24 +258,6 @@ def start_progress():
 		print(u"Get %s available domain name." % domain_available_counter)
 		print(u"======================================")
 
-def save_domain_file():
-	global save_file, available_domain_name_list, fail_file, fail_domain_name_list
-	try:
-		with open(save_file, 'w') as domain_file:
-			for name in available_domain_name_list:
-				domain_file.write(name + '\n')
-	except:
-		print(u"Sorry! Save domain name file fail.")
-	else:
-		print(u"Save domain name file success.")
-	try:
-		with open(fail_file, 'w') as log_file:
-			for log_item in fail_domain_name_list:
-				log_file.write(log_item + '\n')
-	except:
-		print(u"Sorry! Save log file fail.")
-	else:
-		print(u"Save log file success.")
 
 init_args()
 init_env()
@@ -240,19 +265,40 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTSTP, signal_handler)
 #signal.signal(signal.SIGKILL, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
-if only_one_domain is None:
+if only_one_domain is not None:
+	log_exist_domain_name = True
+	check_domain_name(only_one_domain)
+elif retry_fail:
+	try:
+		log_exist_domain_name = True
+		retry_list = []
+		with open(retry_file, 'r') as data:
+			for line in data:
+				retry_list.append(line)
+		for item in retry_list: 
+			if keep_working:
+				check_domain_name(get_domain_from_log(item))
+				time.sleep(each_time_sleep)
+			else:
+				break
+		print(u"========================================")
+		print(u"Retry fail domain name done.")
+		print(u"All checing %s domain name." % domain_counter)
+		print(u"Get %s available domain name." % domain_available_counter)
+		print(u"========================================")
+	except KeyboardInterrupt:
+		print(u"Unnatural exit.")
+	except:
+		print(u"Sorry!Retry fail.")
+	else:
+		print(u"GoodBye!")
+else:
 	try:
 		start_progress()
 	except KeyboardInterrupt:
-		save_domain_file()
 		print(u"Unnatural exit.")
 	except:
-		save_domain_file()
 		print(u"Unkown exception.")
 	else:
-		save_domain_file()
 		print(u"Goodbye.")
-else:
-	log_exist_domain_name = True
-	check_domain_name(only_one_domain)
 
